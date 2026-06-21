@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Planificator trasee curieri</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+:root{
+  --paper:#F7F5F0;
+  --ink:#1A2B2E;
+  --ink-soft:#5B6B6D;
+  --route:#FF5A1F;
+  --route-soft:#FFE4D6;
+  --depot:#2D6A4F;
+  --depot-soft:#DCEEE3;
+  --c2:#8B5CF6;
+  --c2-soft:#EDE7FE;
+  --c3:#1D7FBF;
+  --c3-soft:#DFEEF8;
+  --line:#D4CFC4;
+  --line-soft:#E5E1D8;
+  --white:#FFFFFF;
+  --danger:#C23B22;
+  --radius:2px;
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;height:100%;}
+body{
+  font-family:'Inter',sans-serif;
+  background:var(--paper);
+  color:var(--ink);
+  font-size:14px;
+  line-height:1.45;
+}
+
+.app{
+  display:grid;
+  grid-template-columns: 420px 1fr;
+  height:100vh;
+}
+
+/* ===== SIDEBAR ===== */
+.sidebar{
+  border-right:1px solid var(--line);
+  display:flex;
+  flex-direction:column;
+  background:var(--paper);
+  overflow:hidden;
+}
+
+.brand{
+  padding:20px 22px 16px;
+  border-bottom:1px solid var(--line);
+  flex-shrink:0;
+}
+.brand-mark{
+  display:flex;
+  align-items:baseline;
+  gap:8px;
+}
+.brand-mark .num{
+  font-family:'Space Grotesk',sans-serif;
+  font-weight:700;
+  font-size:22px;
+  color:var(--route);
+  letter-spacing:-0.02em;
+}
+.brand-mark .label{
+  font-family:'Space Grotesk',sans-serif;
+  font-weight:600;
+  font-size:18px;
+  letter-spacing:-0.01em;
+}
+.brand-sub{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10.5px;
+  color:var(--ink-soft);
+  text-transform:uppercase;
+  letter-spacing:0.06em;
+  margin-top:4px;
+}
+
+.tabs{
+  display:flex;
+  border-bottom:1px solid var(--line);
+  flex-shrink:0;
+}
+.tab{
+  flex:1;
+  padding:11px 0;
+  text-align:center;
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:0.05em;
+  color:var(--ink-soft);
+  cursor:pointer;
+  border-bottom:2px solid transparent;
+  background:none;
+  border-left:none;border-right:none;border-top:none;
+  transition:color .15s, border-color .15s;
+}
+.tab:hover{color:var(--ink);}
+.tab.active{color:var(--ink); border-bottom-color:var(--route); font-weight:600;}
+
+.panel{
+  flex:1;
+  overflow-y:auto;
+  display:none;
+}
+.panel.active{display:flex; flex-direction:column;}
+
+/* ---- section pattern ---- */
+.section{
+  padding:18px 22px;
+  border-bottom:1px solid var(--line-soft);
+}
+.section-title{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10.5px;
+  text-transform:uppercase;
+  letter-spacing:0.07em;
+  color:var(--ink-soft);
+  margin:0 0 10px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+/* ---- buttons ---- */
+.btn{
+  font-family:'Inter',sans-serif;
+  font-weight:600;
+  font-size:13px;
+  padding:9px 14px;
+  border:1px solid var(--ink);
+  background:var(--white);
+  color:var(--ink);
+  border-radius:var(--radius);
+  cursor:pointer;
+  transition:background .12s, color .12s, transform .05s;
+}
+.btn:hover{background:var(--ink); color:var(--paper);}
+.btn:active{transform:scale(0.98);}
+.btn-primary{
+  background:var(--ink);
+  color:var(--paper);
+  border-color:var(--ink);
+}
+.btn-primary:hover{background:var(--route); border-color:var(--route); color:var(--white);}
+.btn-accent{
+  background:var(--route);
+  border-color:var(--route);
+  color:var(--white);
+}
+.btn-accent:hover{background:#E64A12; border-color:#E64A12;}
+.btn-confirmed{
+  background:var(--depot-soft);
+  border-color:var(--depot);
+  color:var(--depot);
+}
+.btn-confirmed:hover{background:var(--depot); border-color:var(--depot); color:var(--white);}
+.btn-sm{font-size:11.5px; padding:6px 10px;}
+.btn-ghost{
+  border-color:var(--line);
+  color:var(--ink-soft);
+  background:none;
+}
+.btn-ghost:hover{background:var(--line-soft); color:var(--ink);}
+.btn:disabled{opacity:0.35; cursor:not-allowed; pointer-events:none;}
+.btn-block{width:100%;}
+.btn-icon{
+  width:26px; height:26px;
+  display:inline-flex; align-items:center; justify-content:center;
+  border:1px solid var(--line);
+  background:var(--white);
+  border-radius:var(--radius);
+  cursor:pointer;
+  color:var(--ink-soft);
+  font-size:14px;
+  line-height:1;
+  padding:0;
+}
+.btn-icon:hover{border-color:var(--danger); color:var(--danger); background:#FCEFEC;}
+
+/* ---- upload zone ---- */
+.dropzone{
+  border:1.5px dashed var(--line);
+  border-radius:var(--radius);
+  padding:24px 16px;
+  text-align:center;
+  cursor:pointer;
+  transition:border-color .15s, background .15s;
+}
+.dropzone:hover, .dropzone.drag{
+  border-color:var(--route);
+  background:var(--route-soft);
+}
+.dropzone .dz-icon{font-size:22px; margin-bottom:6px;}
+.dropzone .dz-title{font-weight:600; font-size:13px;}
+.dropzone .dz-sub{font-size:11.5px; color:var(--ink-soft); margin-top:3px;}
+input[type=file]{display:none;}
+
+/* ---- form fields ---- */
+.field{margin-bottom:12px;}
+.field label{
+  display:block;
+  font-size:11.5px;
+  font-weight:600;
+  color:var(--ink-soft);
+  margin-bottom:5px;
+  text-transform:uppercase;
+  letter-spacing:0.03em;
+}
+.field input[type=text], .field select{
+  width:100%;
+  padding:8px 10px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  font-family:'Inter',sans-serif;
+  font-size:13px;
+  background:var(--white);
+  color:var(--ink);
+}
+.field input[type=text]:focus, .field select:focus{
+  outline:2px solid var(--route);
+  outline-offset:-1px;
+  border-color:var(--route);
+}
+.field-row{display:flex; gap:8px;}
+.field-row .field{flex:1;}
+.hint{font-size:11px; color:var(--ink-soft); margin-top:4px;}
+
+/* ---- courier card ---- */
+.courier-card{
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  margin-bottom:12px;
+  background:var(--white);
+  overflow:hidden;
+}
+.courier-head{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:11px 12px;
+  border-bottom:1px solid var(--line-soft);
+}
+.courier-dot{
+  width:11px; height:11px;
+  border-radius:50%;
+  flex-shrink:0;
+  border:2px solid var(--white);
+  box-shadow:0 0 0 1px var(--line);
+}
+.courier-head .courier-name{
+  font-weight:600;
+  font-size:13.5px;
+  flex:1;
+}
+.courier-confirmed-badge{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
+  font-weight:600;
+  color:var(--depot);
+  background:var(--depot-soft);
+  padding:3px 7px;
+  border-radius:10px;
+  white-space:nowrap;
+  flex-shrink:0;
+}
+.courier-body{padding:10px 12px;}
+.courier-point-block{
+  padding-bottom:10px;
+  margin-bottom:10px;
+  border-bottom:1px solid var(--line-soft);
+}
+.courier-point-block:last-of-type{
+  border-bottom:none;
+  margin-bottom:0;
+  padding-bottom:0;
+}
+.stat-row{
+  display:flex;
+  gap:14px;
+  margin-top:8px;
+  padding-top:8px;
+  border-top:1px solid var(--line-soft);
+}
+.stat{flex:1;}
+.stat .stat-num{
+  font-family:'Space Grotesk',sans-serif;
+  font-weight:700;
+  font-size:17px;
+  display:block;
+  line-height:1.1;
+}
+.stat .stat-label{
+  font-family:'JetBrains Mono',monospace;
+  font-size:9.5px;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+  letter-spacing:0.04em;
+}
+
+/* ---- address list ---- */
+.addr-list{flex:1; overflow-y:auto; padding:10px 22px 22px;}
+.addr-item{
+  display:flex;
+  align-items:flex-start;
+  gap:9px;
+  padding:9px 10px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  margin-bottom:7px;
+  background:var(--white);
+  cursor:grab;
+  font-size:12.5px;
+  transition:box-shadow .12s, border-color .12s;
+}
+.addr-item:hover{border-color:var(--ink-soft);}
+.addr-item.dragging{opacity:0.4;}
+.addr-item .addr-badge{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
+  font-weight:600;
+  color:var(--white);
+  background:var(--ink-soft);
+  border-radius:50%;
+  width:18px; height:18px;
+  flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  margin-top:1px;
+}
+.addr-item .addr-text{flex:1;}
+.addr-item .addr-main{font-weight:500;}
+.addr-item .addr-status{
+  font-family:'JetBrains Mono',monospace;
+  font-size:9.5px;
+  color:var(--ink-soft);
+  margin-top:2px;
+  text-transform:uppercase;
+}
+.addr-item .addr-status.ok{color:var(--depot);}
+.addr-item .addr-status.err{color:var(--danger);}
+.addr-item .addr-status.warn{color:#B5400E;}
+.addr-locate-btn{
+  border:1px solid #B5400E;
+  background:none;
+  color:#B5400E;
+  font-family:'JetBrains Mono',monospace;
+  font-size:9.5px;
+  text-transform:uppercase;
+  letter-spacing:0.03em;
+  padding:1px 6px;
+  border-radius:8px;
+  cursor:pointer;
+  margin-left:4px;
+}
+.addr-locate-btn:hover{background:#B5400E; color:#fff;}
+.addr-item .addr-sub-addr{
+  font-size:11.5px;
+  color:var(--ink-soft);
+  margin-top:1px;
+}
+.addr-item .addr-payment-chip{
+  display:inline-block;
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
+  font-weight:600;
+  color:var(--ink);
+  background:var(--line-soft);
+  border-radius:3px;
+  padding:2px 6px;
+  margin-top:4px;
+}
+.addr-item .addr-payment-chip.cod{
+  background:var(--route-soft);
+  color:#B5400E;
+}
+.addr-item .addr-window-chip{
+  display:inline-block;
+  font-family:'JetBrains Mono',monospace;
+  font-size:10.5px;
+  font-weight:600;
+  color:var(--depot);
+  background:var(--depot-soft);
+  border-radius:3px;
+  padding:2px 6px;
+  margin-top:4px;
+  margin-right:4px;
+}
+.addr-item .addr-window-chip.warn{
+  color:var(--danger);
+  background:#FCEFEC;
+}
+.addr-item .addr-remove{
+  border:none; background:none; color:var(--ink-soft);
+  cursor:pointer; font-size:14px; padding:0 2px; flex-shrink:0; align-self:flex-start;
+}
+.addr-item .addr-remove:hover{color:var(--danger);}
+.addr-action-row{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:7px;
+  padding-top:7px;
+  border-top:1px solid var(--line-soft);
+}
+.addr-action-link{
+  border:none;
+  background:none;
+  color:var(--route);
+  font-family:'Inter',sans-serif;
+  font-size:11.5px;
+  font-weight:600;
+  cursor:pointer;
+  padding:0;
+}
+.addr-action-link:hover{text-decoration:underline;}
+.addr-action-sep{color:var(--line); font-size:11px;}
+.addr-action-label{
+  font-size:11px;
+  color:var(--ink-soft);
+  font-weight:500;
+}
+.addr-courier-select{
+  font-family:'Inter',sans-serif;
+  font-size:11px;
+  font-weight:600;
+  padding:3px 6px;
+  border:1px solid var(--line);
+  border-radius:3px;
+  background:var(--white);
+  cursor:pointer;
+  max-width:100%;
+}
+.addr-lock-badge{
+  font-size:11px;
+  cursor:help;
+}
+
+.modal-overlay{
+  position:fixed;
+  top:0; left:0; right:0; bottom:0;
+  background:rgba(26,43,46,0.45);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:2000;
+  padding:20px;
+}
+.modal-box{
+  background:var(--paper);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:20px;
+  width:100%;
+  max-width:380px;
+  max-height:90vh;
+  overflow-y:auto;
+  box-shadow:0 8px 30px rgba(0,0,0,0.25);
+}
+.modal-title{
+  font-family:'Space Grotesk',sans-serif;
+  font-weight:600;
+  font-size:15px;
+  margin-bottom:14px;
+}
+
+.empty-state{
+  text-align:center;
+  padding:36px 18px;
+  color:var(--ink-soft);
+}
+.empty-state .es-icon{font-size:26px; margin-bottom:8px; opacity:0.5;}
+.empty-state .es-title{font-weight:600; font-size:13px; color:var(--ink);}
+.empty-state .es-sub{font-size:12px; margin-top:4px;}
+
+/* ---- bottom action bar ---- */
+.action-bar{
+  padding:14px 22px;
+  border-top:1px solid var(--line);
+  flex-shrink:0;
+  display:flex;
+  gap:8px;
+  background:var(--paper);
+}
+.action-bar .btn{flex:1;}
+
+/* ===== MAP ===== */
+.map-wrap{position:relative; height:100%;}
+#map{width:100%; height:100%; background:#E8E5DC;}
+
+.map-legend{
+  position:absolute;
+  bottom:18px; left:18px;
+  background:rgba(255,255,255,0.96);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:10px 12px;
+  font-size:11.5px;
+  z-index:500;
+  max-width:220px;
+  box-shadow:0 2px 8px rgba(0,0,0,0.06);
+}
+.map-legend .lg-row{display:flex;align-items:center;gap:7px;margin-bottom:5px;}
+.map-legend .lg-row:last-child{margin-bottom:0;}
+.map-legend .lg-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.map-legend .lg-name{font-weight:500;}
+.map-legend .lg-dist{font-family:'JetBrains Mono',monospace;color:var(--ink-soft); margin-left:auto; font-size:10.5px;}
+
+.map-top-bar{
+  position:absolute;
+  top:18px; left:18px; right:18px;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  z-index:500;
+  pointer-events:none;
+}
+.map-title-chip{
+  background:rgba(255,255,255,0.96);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:9px 13px;
+  box-shadow:0 2px 8px rgba(0,0,0,0.06);
+  pointer-events:auto;
+}
+.map-title-chip .mt-title{font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:13.5px;}
+.map-title-chip .mt-sub{font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--ink-soft); margin-top:2px;}
+
+.toast{
+  position:absolute;
+  top:18px; left:50%;
+  transform:translateX(-50%);
+  background:var(--ink);
+  color:var(--paper);
+  padding:10px 18px;
+  border-radius:var(--radius);
+  font-size:12.5px;
+  z-index:1000;
+  opacity:0;
+  transition:opacity .25s, transform .25s;
+  pointer-events:none;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.toast.show{opacity:1; transform:translateX(-50%) translateY(4px);}
+.toast.error{background:var(--danger);}
+
+/* leaflet popup tweak */
+.leaflet-popup-content-wrapper{border-radius:2px; font-family:'Inter',sans-serif;}
+.leaflet-popup-content{font-size:12.5px; margin:9px 12px;}
+.stop-popup .sp-title{font-weight:600; margin-bottom:2px;}
+.stop-popup .sp-name{font-weight:600; font-size:12.5px; margin-bottom:2px;}
+.stop-popup .sp-meta{font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--ink-soft);}
+.stop-popup .sp-payment{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10.5px;
+  font-weight:600;
+  color:#B5400E;
+  background:var(--route-soft);
+  display:inline-block;
+  padding:2px 6px;
+  border-radius:3px;
+  margin-top:4px;
+}
+.stop-popup .sp-window{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10.5px;
+  font-weight:600;
+  color:var(--depot);
+  background:var(--depot-soft);
+  display:inline-block;
+  padding:2px 6px;
+  border-radius:3px;
+  margin-bottom:4px;
+}
+.stop-popup .sp-window.warn{
+  color:var(--danger);
+  background:#FCEFEC;
+}
+
+.spinner{
+  display:inline-block;
+  width:13px;height:13px;
+  border:2px solid rgba(255,255,255,0.35);
+  border-top-color:var(--paper);
+  border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.loading-row{
+  display:flex; align-items:center; gap:8px;
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
+  color:var(--ink-soft);
+  padding:8px 0;
+}
+.loading-row .sp-dark{
+  border:2px solid var(--line);
+  border-top-color:var(--ink-soft);
+}
+
+::-webkit-scrollbar{width:8px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}
+::-webkit-scrollbar-thumb:hover{background:var(--ink-soft);}
+
+@media (max-width: 880px){
+  .app{grid-template-columns:1fr;}
+  .sidebar{display:none;}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ SIDEBAR ============ -->
+  <div class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <span class="num">01</span>
+        <span class="label">Trasee curieri</span>
+      </div>
+      <div class="brand-sub" id="dateStamp">Manifest de livrare</div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-panel="panel-curieri">Curieri</button>
+      <button class="tab" data-panel="panel-adrese">Adrese</button>
+      <button class="tab" data-panel="panel-trasee">Trasee</button>
+    </div>
+
+    <!-- TAB: CURIERI -->
+    <div class="panel active" id="panel-curieri">
+      <div class="section" style="flex:1; overflow-y:auto;">
+        <div class="section-title">
+          <span>Curieri activi</span>
+          <span id="courierCount">0</span>
+        </div>
+        <div id="courierList"></div>
+        <button class="btn btn-ghost btn-block" id="addCourierBtn" style="margin-top:4px;">+ Adaugă curier</button>
+      </div>
+    </div>
+
+    <!-- TAB: ADRESE -->
+    <div class="panel" id="panel-adrese">
+      <div class="section">
+        <div class="section-title"><span>Import adrese</span></div>
+        <div class="dropzone" id="dropzone">
+          <div class="dz-icon">⇪</div>
+          <div class="dz-title">Trage fișierul aici sau apasă</div>
+          <div class="dz-sub">CSV sau XLSX · nume, telefon, adresă, sumă, plată</div>
+        </div>
+        <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
+        <div class="hint" id="columnPicker" style="display:none;"></div>
+        <button class="btn btn-ghost btn-block" id="addManualBtn" style="margin-top:10px;">+ Adaugă adresă manual</button>
+      </div>
+      <div class="section" id="geocodeSection" style="display:none;">
+        <div class="section-title"><span>Geocodare</span></div>
+        <div id="geocodeStatus" class="loading-row"><span class="spinner sp-dark"></span><span>Se localizează adresele…</span></div>
+        <button class="btn btn-primary btn-block" id="geocodeBtn" style="margin-top:8px; display:none;">Localizează adresele</button>
+      </div>
+      <div class="addr-list" id="addrList">
+        <div class="empty-state">
+          <div class="es-icon">▦</div>
+          <div class="es-title">Nicio adresă încărcată</div>
+          <div class="es-sub">Importă un fișier CSV/Excel sau adaugă manual</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: TRASEE -->
+    <div class="panel" id="panel-trasee">
+      <div class="section">
+        <div class="section-title"><span>Repartiție</span></div>
+        <button class="btn btn-accent btn-block" id="autoAssignBtn">Repartizează automat</button>
+        <div class="hint">Adresele se împart pe curieri în funcție de proximitate geografică. Poți rearanja manual mai jos.</div>
+      </div>
+      <div class="section" style="flex:1; overflow-y:auto;" id="routeSummary">
+        <div class="empty-state">
+          <div class="es-icon">→</div>
+          <div class="es-title">Niciun traseu generat</div>
+          <div class="es-sub">Adaugă curieri și adrese, apoi repartizează</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="action-bar">
+      <button class="btn btn-ghost" id="resetBtn">Resetează tot</button>
+      <button class="btn btn-primary" id="exportBtn" disabled>Exportă trasee (Excel)</button>
+    </div>
+  </div>
+
+  <!-- ============ MAP ============ -->
+  <div class="map-wrap">
+    <div id="map"></div>
+    <div class="map-top-bar">
+      <div class="map-title-chip">
+        <div class="mt-title" id="mapTitle">Niciun traseu activ</div>
+        <div class="mt-sub" id="mapSub">0 adrese · 0 curieri</div>
+      </div>
+    </div>
+    <div class="map-legend" id="mapLegend" style="display:none;"></div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
