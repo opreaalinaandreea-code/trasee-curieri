@@ -8,9 +8,10 @@ Construită pentru livrări în **București, Ilfov și zona limitrofă**.
 
 - **Import adrese** din CSV/XLSX (export WooCommerce sau similar), cu mapare automată a coloanelor (nume, telefon, oraș, stradă, număr, detalii, metodă de plată, sumă, notă client)
 - **Geocodare** prin OpenStreetMap/Nominatim, cu:
+  - bază persistentă de adrese verificate (salvată local în browser) — adresele corectate manual sau geocodate cu precizie ridicată sunt reținute și reutilizate instant la viitoare importuri identice, fără cerere nouă către Nominatim
   - normalizare automată a prescurtărilor românești de stradă (str/sos/bd/cal → Strada/Șoseaua/Bulevardul/Calea)
   - cascadă de variante de interogare pentru adrese incomplete
-  - scor de încredere (precis / aproximativ / incert) vizibil pe fiecare adresă
+  - scor de încredere (precis / aproximativ / incert / din bază verificată) vizibil pe fiecare adresă
   - validare geografică strictă — orice rezultat în afara zonei București/Ilfov + marjă e respins automat
 - **Curieri** configurabili individual: punct de plecare, punct de finalizare (poate diferi de plecare), oră de plecare, oră-limită opțională, cu buton de confirmare/validare per curier
 - **Repartizare automată** a adreselor pe curieri, în 2 pași:
@@ -62,8 +63,9 @@ Validarea geografică e fixată pe București + Ilfov + ~25-30km marjă. Pentru 
 ## Limitări cunoscute
 
 - Geocodarea gratuită (Nominatim) nu garantează precizie 100% pentru toate adresele — adresele cu scor de încredere scăzut trebuie verificate/ajustate manual pe hartă
+- Baza de adrese verificate se salvează în `localStorage`, local pe acest calculator/browser — nu se sincronizează automat între dispozitive sau calculatoare diferite
 - OSRM (server demo public) poate avea limite de rată sub sarcină mare; pentru volume foarte mari, ar fi nevoie de o instanță proprie
-- Fără persistență — datele se pierd la reîncărcarea paginii (nu există backend/bază de date)
+- Fără persistență pentru restul datelor (curieri, adrese, trasee) — acestea se pierd la reîncărcarea paginii (nu există backend/bază de date)
 
 ## Licență
 
