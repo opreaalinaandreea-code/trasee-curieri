@@ -377,6 +377,67 @@ function initAddressPanel(){
   });
 
   document.getElementById('geocodeBtn').addEventListener('click', () => geocodeAllPending());
+  document.getElementById('manageVerifiedDbBtn').addEventListener('click', () => showVerifiedDbManager());
+  updateVerifiedDbCounter();
+}
+
+function updateVerifiedDbCounter(){
+  const el = document.getElementById('verifiedDbCount');
+  if (el) el.textContent = countVerifiedAddresses();
+}
+
+function showVerifiedDbManager(){
+  const db = loadVerifiedAddressDB();
+  const entries = Object.entries(db).sort((a, b) => (b[1].savedAt || '').localeCompare(a[1].savedAt || ''));
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:480px;">
+      <div class="modal-title">Bază adrese verificate (${entries.length})</div>
+      <div class="hint" style="margin-bottom:10px;">Aceste adrese sunt recunoscute automat la viitoare importuri, fără să mai treacă prin geocodare. Șterge o intrare dacă a fost salvată cu o poziție greșită.</div>
+      <div id="verifiedDbList" style="max-height:50vh; overflow-y:auto;">
+        ${entries.length ? entries.map(([key, entry]) => `
+          <div class="verified-db-row" data-key="${escapeHtml(key)}">
+            <div class="verified-db-text">
+              <div class="verified-db-addr">${escapeHtml(entry.originalText || key)}</div>
+              <div class="verified-db-coords">${entry.lat.toFixed(5)}, ${entry.lng.toFixed(5)}</div>
+            </div>
+            <button class="addr-remove" data-remove-verified="${escapeHtml(key)}" title="Șterge din bază">×</button>
+          </div>
+        `).join('') : '<div class="hint">Baza este goală — nu există încă adrese salvate.</div>'}
+      </div>
+      <div style="display:flex; gap:6px; margin-top:14px;">
+        <button class="btn btn-ghost btn-sm" id="vdbCloseBtn" style="flex:1;">Închide</button>
+        ${entries.length ? '<button class="btn btn-sm" id="vdbClearAllBtn" style="flex:1; border-color:var(--danger); color:var(--danger);">Șterge tot</button>' : ''}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.getElementById('vdbCloseBtn').addEventListener('click', close);
+
+  overlay.querySelectorAll('[data-remove-verified]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const db = loadVerifiedAddressDB();
+      delete db[btn.dataset.removeVerified];
+      saveVerifiedAddressDB(db);
+      btn.closest('.verified-db-row').remove();
+      updateVerifiedDbCounter();
+    });
+  });
+
+  const clearAllBtn = document.getElementById('vdbClearAllBtn');
+  if (clearAllBtn){
+    clearAllBtn.addEventListener('click', () => {
+      if (!confirm('Sigur vrei să ștergi toate adresele din baza verificată? Această acțiune nu poate fi anulată.')) return;
+      saveVerifiedAddressDB({});
+      updateVerifiedDbCounter();
+      close();
+    });
+  }
 }
 
 function showEditAddressForm(addrId){
@@ -772,6 +833,8 @@ function renderAddresses(){
     else if (a.status === 'ok'){
       if (a.manuallyAdjusted && a.outOfArea){
         statusHtml = `<div class="addr-status warn">⚠ poziție în afara zonei București/Ilfov <button class="addr-locate-btn" data-locate="${a.id}">verifică pe hartă</button></div>`;
+      } else if (a.confidence === 'verified'){
+        statusHtml = `<div class="addr-status ok">✓ din baza de adrese verificate</div>`;
       } else if (a.manuallyAdjusted){
         statusHtml = `<div class="addr-status ok">✓ poziție ajustată manual</div>`;
       } else if (a.confidence === 'high'){
@@ -914,6 +977,63 @@ function renderAddresses(){
 // -------------------------------------------------------------------
 const geocodeCache = new Map();
 
+// ---- Persistent verified-address database (localStorage) ----------
+// Once an address has been manually confirmed as correctly located (dragged on the map,
+// or edited and re-confirmed), its exact text + coordinates are saved here. Future imports
+// of the SAME exact address text skip Nominatim entirely and reuse the verified position —
+// this is how repeat customers' addresses get more reliable over time.
+const VERIFIED_ADDR_STORAGE_KEY = 'trasee-curieri:verified-addresses';
+
+function loadVerifiedAddressDB(){
+  try {
+    const raw = localStorage.getItem(VERIFIED_ADDR_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e){
+    console.error('Could not read verified address DB', e);
+    return {};
+  }
+}
+
+function saveVerifiedAddressDB(db){
+  try {
+    localStorage.setItem(VERIFIED_ADDR_STORAGE_KEY, JSON.stringify(db));
+  } catch (e){
+    console.error('Could not save verified address DB', e);
+  }
+}
+
+/**
+ * Normalizes ONLY whitespace and case for the lookup key — exact text match otherwise,
+ * as requested (no fuzzy matching). "Strada Garleni 11, București" and
+ * "  strada garleni 11, bucuresti  " are treated as the same key, but any other
+ * difference (missing word, different number, etc.) is a different address.
+ */
+function addressLookupKey(address){
+  return String(address || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function getVerifiedAddress(address){
+  const db = loadVerifiedAddressDB();
+  return db[addressLookupKey(address)] || null;
+}
+
+function saveVerifiedAddress(address, lat, lng){
+  const db = loadVerifiedAddressDB();
+  db[addressLookupKey(address)] = { lat, lng, originalText: address, savedAt: new Date().toISOString() };
+  saveVerifiedAddressDB(db);
+  updateVerifiedDbCounter();
+}
+
+function removeVerifiedAddress(address){
+  const db = loadVerifiedAddressDB();
+  delete db[addressLookupKey(address)];
+  saveVerifiedAddressDB(db);
+}
+
+function countVerifiedAddresses(){
+  return Object.keys(loadVerifiedAddressDB()).length;
+}
+
 /**
  * Builds a list of query variants to try, from most to least specific.
  * Romanian street addresses are often abbreviated/incomplete (e.g. "Oltenitei 44"
@@ -1012,6 +1132,15 @@ function isWithinServiceArea(lat, lng){
 async function geocodeOne(address){
   if (geocodeCache.has(address)) return geocodeCache.get(address);
 
+  // 1. Check the persistent verified-address database first — exact text match only.
+  //    Skips Nominatim entirely for addresses we've already confirmed correct before.
+  const verified = getVerifiedAddress(address);
+  if (verified){
+    const result = { lat: verified.lat, lng: verified.lng, confidence: 'verified', matchedQuery: address, displayName: '' };
+    geocodeCache.set(address, result);
+    return result;
+  }
+
   const variants = buildAddressVariants(address);
   let bestResult = null;
   let sawOutOfAreaResult = false;
@@ -1089,7 +1218,10 @@ async function geocodeAllPending(){
       a.status = 'ok';
       a.confidence = result.confidence;
       a.outOfArea = false;
-      if (result.confidence !== 'high') lowConfidenceCount++;
+      if (result.confidence !== 'high' && result.confidence !== 'verified') lowConfidenceCount++;
+      if (result.confidence === 'high'){
+        saveVerifiedAddress(a.raw, result.lat, result.lng);
+      }
     } else {
       a.status = 'error';
       a.confidence = null;
@@ -1695,8 +1827,9 @@ function buildStopPopup(stopNumber, courierName, addr, win){
 }
 
 function makeDotIcon(color, addr){
-  const ringColor = (!addr.manuallyAdjusted && addr.confidence && addr.confidence !== 'high') ? 'var(--danger)' : '#fff';
-  const ringWidth = (!addr.manuallyAdjusted && addr.confidence && addr.confidence !== 'high') ? 3 : 2;
+  const isLowConfidence = !addr.manuallyAdjusted && addr.confidence && addr.confidence !== 'high' && addr.confidence !== 'verified';
+  const ringColor = isLowConfidence ? 'var(--danger)' : '#fff';
+  const ringWidth = isLowConfidence ? 3 : 2;
   return L.divIcon({
     className: '',
     html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:${ringWidth}px solid ${ringColor};box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>`,
@@ -1714,6 +1847,12 @@ function onAddressMarkerDragged(addrId, newLatLng){
   addr.confidence = 'high'; // manual placement is by definition the most trustworthy
   addr.outOfArea = !isWithinServiceArea(newLatLng.lat, newLatLng.lng);
 
+  // save to the persistent verified-address database for future imports of this exact
+  // address text — but only if the corrected position is actually within the service area
+  if (!addr.outOfArea && addr.raw){
+    saveVerifiedAddress(addr.raw, newLatLng.lat, newLatLng.lng);
+  }
+
   // any route containing this address now has a stale leg/geometry — recompute distances
   Object.keys(state.routes).forEach(courierId => {
     const route = state.routes[parseInt(courierId)];
@@ -1729,7 +1868,7 @@ function onAddressMarkerDragged(addrId, newLatLng){
   if (addr.outOfArea){
     showToast('Atenție: poziția trasă este în afara zonei București/Ilfov.', true);
   } else {
-    showToast('Poziție actualizată manual.');
+    showToast('Poziție actualizată manual și salvată în baza de adrese verificate.');
   }
 }
 
@@ -1782,8 +1921,9 @@ function redrawMap(){
       route.order.forEach((addrId, idx) => {
         const addr = state.addresses.find(a => a.id === addrId);
         if (!addr) return;
-        const ringColor = addr.manuallyAdjusted ? '#fff' : (addr.confidence === 'low' ? 'var(--danger)' : addr.confidence === 'medium' ? '#fff' : '#fff');
-        const ringWidth = (!addr.manuallyAdjusted && addr.confidence !== 'high') ? 3 : 2;
+        const isLowConfidence = !addr.manuallyAdjusted && addr.confidence && addr.confidence !== 'high' && addr.confidence !== 'verified';
+        const ringColor = isLowConfidence ? 'var(--danger)' : '#fff';
+        const ringWidth = isLowConfidence ? 3 : 2;
         const icon = L.divIcon({
           className: '',
           html: `<div style="background:${c.color};color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;border:${ringWidth}px solid ${ringColor};box-shadow:0 1px 4px rgba(0,0,0,0.25);">${idx+1}</div>`,
