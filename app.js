@@ -29,7 +29,12 @@ document.addEventListener('DOMContentLoaded', () => {
   initRoutePanel();
   initActionBar();
   setDateStamp();
-  addCourier(); // start with one courier by default
+  const hadSavedCouriers = loadCouriersFromStorage();
+  if (hadSavedCouriers){
+    renderCouriers();
+  } else {
+    addCourier(); // start with one courier by default
+  }
 });
 
 function setDateStamp(){
@@ -95,6 +100,38 @@ function initCourierPanel(){
   });
 }
 
+// ---- Persistent courier list (localStorage) ------------------------
+// Couriers (name, start/end points, departure time, etc.) are saved across sessions, since
+// the same couriers tend to be reused day after day. Addresses and routes are NOT persisted
+// here — those are expected to be re-imported fresh for each day's deliveries.
+const COURIERS_STORAGE_KEY = 'trasee-curieri:couriers';
+
+function saveCouriersToStorage(){
+  try {
+    localStorage.setItem(COURIERS_STORAGE_KEY, JSON.stringify({
+      couriers: state.couriers,
+      nextCourierId: state.nextCourierId
+    }));
+  } catch (e){
+    console.error('Could not save couriers', e);
+  }
+}
+
+function loadCouriersFromStorage(){
+  try {
+    const raw = localStorage.getItem(COURIERS_STORAGE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.couriers) || !data.couriers.length) return false;
+    state.couriers = data.couriers;
+    state.nextCourierId = data.nextCourierId || (Math.max(...data.couriers.map(c => c.id)) + 1);
+    return true;
+  } catch (e){
+    console.error('Could not load couriers', e);
+    return false;
+  }
+}
+
 function addCourier(){
   const id = state.nextCourierId++;
   const color = COURIER_COLORS[(id - 1) % COURIER_COLORS.length];
@@ -109,6 +146,7 @@ function addCourier(){
     confirmed: false,       // true once the courier's fields have been validated via the confirm button
     color
   });
+  saveCouriersToStorage();
   renderCouriers();
 }
 
@@ -116,6 +154,7 @@ function removeCourier(id){
   state.couriers = state.couriers.filter(c => c.id !== id);
   state.addresses.forEach(a => { if (a.courierId === id) a.courierId = null; });
   delete state.routes[id];
+  saveCouriersToStorage();
   renderCouriers();
   renderAddresses();
   renderRouteSummary();
@@ -325,6 +364,8 @@ function renderCouriers(){
       renderRouteSummary(); // re-check warnings against new limit
     });
   });
+
+  saveCouriersToStorage();
 }
 
 async function onCourierAddressChange(input, which){
@@ -2253,12 +2294,14 @@ function fitMapToAll(){
 // -------------------------------------------------------------------
 function initActionBar(){
   document.getElementById('resetBtn').addEventListener('click', () => {
-    if (!confirm('Sigur vrei să resetezi tot? Se vor șterge curierii, adresele și traseele.')) return;
+    if (!confirm('Sigur vrei să resetezi tot? Se vor șterge curierii salvați, adresele și traseele.')) return;
     state.couriers = [];
     state.addresses = [];
     state.routes = {};
     state.nextCourierId = 1;
     state.nextAddrId = 1;
+    state.routeSelection.clear();
+    try { localStorage.removeItem(COURIERS_STORAGE_KEY); } catch (e){ console.error(e); }
     addCourier();
     renderAddresses();
     renderRouteSummary();
@@ -2267,6 +2310,54 @@ function initActionBar(){
     document.getElementById('geocodeSection').style.display = 'none';
     map.setView([45.9432, 24.9668], 7);
     switchToTab('panel-curieri');
+  });
+
+  document.getElementById('resetCouriersBtn').addEventListener('click', () => {
+    if (!confirm('Sigur vrei să ștergi toți curierii salvați? Adresele deja alocate vor rămâne nerepartizate, iar traseele calculate se vor șterge.')) return;
+    state.couriers = [];
+    state.nextCourierId = 1;
+    state.addresses.forEach(a => { a.courierId = null; a.manuallyAssigned = false; });
+    state.routes = {};
+    state.routeSelection.clear();
+    try { localStorage.removeItem(COURIERS_STORAGE_KEY); } catch (e){ console.error(e); }
+    addCourier();
+    renderAddresses();
+    renderRouteSummary();
+    redrawMap();
+    document.getElementById('exportBtn').disabled = true;
+    showToast('Curierii au fost resetați.');
+  });
+
+  document.getElementById('resetAddressesBtn').addEventListener('click', () => {
+    if (!confirm('Sigur vrei să ștergi toate adresele importate? Traseele calculate se vor șterge.')) return;
+    state.addresses = [];
+    state.nextAddrId = 1;
+    state.routes = {};
+    state.routeSelection.clear();
+    renderAddresses();
+    renderCouriers();
+    renderRouteSummary();
+    redrawMap();
+    document.getElementById('exportBtn').disabled = true;
+    document.getElementById('geocodeSection').style.display = 'none';
+    showToast('Adresele au fost resetate.');
+  });
+
+  document.getElementById('resetRoutesBtn').addEventListener('click', () => {
+    if (!Object.keys(state.routes).length){
+      showToast('Nu există trasee de resetat.');
+      return;
+    }
+    if (!confirm('Sigur vrei să ștergi traseele calculate? Adresele rămân, dar vor trebui repartizate din nou.')) return;
+    state.routes = {};
+    state.routeSelection.clear();
+    state.addresses.forEach(a => { a.courierId = null; a.manuallyAssigned = false; });
+    renderAddresses();
+    renderCouriers();
+    renderRouteSummary();
+    redrawMap();
+    document.getElementById('exportBtn').disabled = true;
+    showToast('Traseele au fost resetate.');
   });
 
   document.getElementById('exportBtn').addEventListener('click', exportRoutesXlsx);
