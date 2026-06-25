@@ -765,6 +765,7 @@ input[type=file]{display:none;}
         </div>
         <div id="courierList"></div>
         <button class="btn btn-ghost btn-block" id="addCourierBtn" style="margin-top:4px;">+ Adaugă curier</button>
+        <button class="btn btn-ghost btn-block btn-sm" id="resetCouriersBtn" style="margin-top:8px; color:var(--danger); border-color:var(--line);">Resetează curieri</button>
       </div>
     </div>
 
@@ -780,6 +781,7 @@ input[type=file]{display:none;}
         <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
         <div class="hint" id="columnPicker" style="display:none;"></div>
         <button class="btn btn-ghost btn-block" id="addManualBtn" style="margin-top:10px;">+ Adaugă adresă manual</button>
+        <button class="btn btn-ghost btn-block btn-sm" id="resetAddressesBtn" style="margin-top:8px; color:var(--danger); border-color:var(--line);">Resetează adrese</button>
       </div>
       <div class="section" id="geocodeSection" style="display:none;">
         <div class="section-title"><span>Geocodare</span></div>
@@ -809,6 +811,7 @@ input[type=file]{display:none;}
         <div class="section-title"><span>Repartiție</span></div>
         <button class="btn btn-accent btn-block" id="autoAssignBtn">Repartizează automat</button>
         <div class="hint">Adresele se împart pe curieri în funcție de proximitate geografică. Poți rearanja manual mai jos.</div>
+        <button class="btn btn-ghost btn-block btn-sm" id="resetRoutesBtn" style="margin-top:8px; color:var(--danger); border-color:var(--line);">Resetează trasee</button>
       </div>
       <div class="section" style="flex:1; overflow-y:auto;" id="routeSummary">
         <div class="empty-state">
