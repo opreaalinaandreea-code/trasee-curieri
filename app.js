@@ -462,6 +462,10 @@ function showEditAddressForm(addrId){
         <input type="text" id="eaAddress" value="${escapeHtml(addr.raw)}">
         <div class="hint">Dacă schimbi adresa, va trebui re-localizată pe hartă.</div>
       </div>
+      <label style="display:flex; align-items:center; gap:6px; margin-bottom:7px; font-size:12px; font-weight:500; cursor:pointer;">
+        <input type="checkbox" id="eaAllowOutOfArea" ${addr.allowOutOfArea ? 'checked' : ''} style="margin:0;">
+        Permite în afara zonei București/Ilfov (adresă excepțională, confirmată manual)
+      </label>
       <div class="field" style="margin-bottom:7px;">
         <label>Detalii (bloc/scară/ap/interfon)</label>
         <input type="text" id="eaDetails" value="${escapeHtml(addr.details)}">
@@ -496,14 +500,16 @@ function showEditAddressForm(addrId){
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   document.getElementById('eaCancelBtn').addEventListener('click', close);
 
-  document.getElementById('eaSaveBtn').addEventListener('click', () => {
+  document.getElementById('eaSaveBtn').addEventListener('click', async () => {
     const newAddressInput = document.getElementById('eaAddress').value.trim();
     if (!newAddressInput){
       showToast('Adresa este obligatorie.', true);
       return;
     }
     const newAddress = /rom[aâ]nia/i.test(newAddressInput) ? newAddressInput : `${newAddressInput}, România`;
+    const newAllowOutOfArea = document.getElementById('eaAllowOutOfArea').checked;
     const addressChanged = newAddress !== addr.raw;
+    const allowFlagChanged = newAllowOutOfArea !== addr.allowOutOfArea;
 
     addr.clientName = document.getElementById('eaName').value.trim();
     addr.phone = document.getElementById('eaPhone').value.trim();
@@ -512,8 +518,9 @@ function showEditAddressForm(addrId){
     addr.paymentMethod = document.getElementById('eaPayment').value;
     addr.customerNote = document.getElementById('eaNote').value.trim();
     addr.raw = newAddress;
+    addr.allowOutOfArea = newAllowOutOfArea;
 
-    if (addressChanged){
+    if (addressChanged || (allowFlagChanged && addr.status === 'error')){
       addr.lat = null;
       addr.lng = null;
       addr.status = 'pending';
@@ -538,7 +545,37 @@ function showEditAddressForm(addrId){
     renderRouteSummary();
     maybeShowGeocodeButton();
     redrawMap();
-    showToast(addressChanged ? 'Adresă actualizată — necesită re-localizare.' : 'Adresă actualizată.');
+
+    // re-geocode immediately so the user sees the result of the new flag right away,
+    // instead of waiting for the next bulk "Localizează adresele" / auto-assign pass
+    if (addr.status === 'pending'){
+      showToast('Se re-localizează adresa…');
+      const result = await geocodeOne(addr.raw, addr.allowOutOfArea);
+      if (result && result.outOfArea){
+        addr.status = 'error';
+        addr.confidence = null;
+        addr.outOfArea = true;
+        showToast('Adresa este în afara zonei București/Ilfov. Bifează "permite în afara zonei" dacă vrei să o accepți.', true);
+      } else if (result){
+        addr.lat = result.lat;
+        addr.lng = result.lng;
+        addr.status = 'ok';
+        addr.confidence = result.confidence;
+        addr.outOfArea = !isWithinServiceArea(result.lat, result.lng);
+        if (result.confidence === 'high' && !addr.outOfArea){
+          saveVerifiedAddress(addr.raw, result.lat, result.lng);
+        }
+        showToast(addr.outOfArea ? 'Adresă localizată în afara zonei (permis manual).' : 'Adresă re-localizată cu succes.');
+      } else {
+        addr.status = 'error';
+        addr.confidence = null;
+        showToast('Nu am putut localiza adresa.', true);
+      }
+      renderAddresses();
+      renderCouriers();
+      maybeShowGeocodeButton();
+      redrawMap();
+    }
   });
 }
 
@@ -782,6 +819,7 @@ function addAddress(data){
     confidence: null,        // 'high' | 'medium' | 'low' | null — geocoding precision indicator
     manuallyAdjusted: false, // true once the pin has been dragged to a corrected position
     outOfArea: false,        // true if geocoding only found results outside the Bucharest/Ilfov service area
+    allowOutOfArea: false,   // true if the user explicitly opted in to allow this address outside the service area
     courierId: null,
     manuallyAssigned: false  // true once the courier was set explicitly via the reassign dropdown
   });
@@ -831,7 +869,9 @@ function renderAddresses(){
     let statusHtml = '';
     if (a.status === 'pending') statusHtml = `<div class="addr-status">în așteptare</div>`;
     else if (a.status === 'ok'){
-      if (a.manuallyAdjusted && a.outOfArea){
+      if (a.outOfArea && a.allowOutOfArea){
+        statusHtml = `<div class="addr-status warn">⚠ în afara zonei București/Ilfov (permis manual) <button class="addr-locate-btn" data-locate="${a.id}">verifică pe hartă</button></div>`;
+      } else if (a.outOfArea){
         statusHtml = `<div class="addr-status warn">⚠ poziție în afara zonei București/Ilfov <button class="addr-locate-btn" data-locate="${a.id}">verifică pe hartă</button></div>`;
       } else if (a.confidence === 'verified'){
         statusHtml = `<div class="addr-status ok">✓ din baza de adrese verificate</div>`;
@@ -1129,20 +1169,22 @@ function isWithinServiceArea(lat, lng){
          lng >= SERVICE_AREA_BOUNDS.minLng && lng <= SERVICE_AREA_BOUNDS.maxLng;
 }
 
-async function geocodeOne(address){
-  if (geocodeCache.has(address)) return geocodeCache.get(address);
+async function geocodeOne(address, allowOutOfArea = false){
+  const cacheKey = allowOutOfArea ? `${address}__allowOOA` : address;
+  if (geocodeCache.has(cacheKey)) return geocodeCache.get(cacheKey);
 
   // 1. Check the persistent verified-address database first — exact text match only.
   //    Skips Nominatim entirely for addresses we've already confirmed correct before.
   const verified = getVerifiedAddress(address);
   if (verified){
     const result = { lat: verified.lat, lng: verified.lng, confidence: 'verified', matchedQuery: address, displayName: '' };
-    geocodeCache.set(address, result);
+    geocodeCache.set(cacheKey, result);
     return result;
   }
 
   const variants = buildAddressVariants(address);
   let bestResult = null;
+  let bestOutOfAreaResult = null;
   let sawOutOfAreaResult = false;
 
   for (const variant of variants){
@@ -1153,15 +1195,19 @@ async function geocodeOne(address){
       if (data && data.length){
         const lat = parseFloat(data[0].lat);
         const lng = parseFloat(data[0].lon);
+        const confidence = scoreResultConfidence(data[0]);
 
         if (!isWithinServiceArea(lat, lng)){
-          // Nominatim returned a result outside Bucharest/Ilfov+margin — reject it even if
-          // it would otherwise look "confident", and keep trying other query variants.
+          // Outside Bucharest/Ilfov+margin — rejected by default, but if the user explicitly
+          // allowed out-of-area for this address, keep the best such result as a fallback
+          // (still prefer continuing the cascade in case a later variant lands in-area).
           sawOutOfAreaResult = true;
+          if (allowOutOfArea && (!bestOutOfAreaResult || confidence === 'high')){
+            bestOutOfAreaResult = { lat, lng, confidence, matchedQuery: variant, displayName: data[0].display_name || '' };
+          }
           continue;
         }
 
-        const confidence = scoreResultConfidence(data[0]);
         const result = {
           lat, lng,
           confidence,
@@ -1169,7 +1215,7 @@ async function geocodeOne(address){
           displayName: data[0].display_name || ''
         };
         if (confidence === 'high'){
-          geocodeCache.set(address, result);
+          geocodeCache.set(cacheKey, result);
           return result;
         }
         if (!bestResult) bestResult = result; // keep first medium/low as fallback, but keep trying for better
@@ -1180,14 +1226,19 @@ async function geocodeOne(address){
     if (variant !== variants[variants.length - 1]) await sleep(1000); // respect Nominatim rate limit between cascade attempts
   }
 
+  if (!bestResult && allowOutOfArea && bestOutOfAreaResult){
+    geocodeCache.set(cacheKey, bestOutOfAreaResult);
+    return bestOutOfAreaResult;
+  }
+
   if (!bestResult && sawOutOfAreaResult){
     // every variant resolved to somewhere outside the service area — flag distinctly so the
     // UI can show a clear "out of area" error instead of a generic "not found"
-    geocodeCache.set(address, { outOfArea: true });
+    geocodeCache.set(cacheKey, { outOfArea: true });
     return { outOfArea: true };
   }
 
-  geocodeCache.set(address, bestResult);
+  geocodeCache.set(cacheKey, bestResult);
   return bestResult;
 }
 
@@ -1206,7 +1257,7 @@ async function geocodeAllPending(){
   let outOfAreaCount = 0;
   for (const a of pending){
     statusRow.querySelector('span:last-child').textContent = `Se localizează ${done + 1}/${pending.length}…`;
-    const result = await geocodeOne(a.raw);
+    const result = await geocodeOne(a.raw, a.allowOutOfArea);
     if (result && result.outOfArea){
       a.status = 'error';
       a.confidence = null;
@@ -1217,9 +1268,9 @@ async function geocodeAllPending(){
       a.lng = result.lng;
       a.status = 'ok';
       a.confidence = result.confidence;
-      a.outOfArea = false;
+      a.outOfArea = !isWithinServiceArea(result.lat, result.lng); // true even when allowed, for visual flagging
       if (result.confidence !== 'high' && result.confidence !== 'verified') lowConfidenceCount++;
-      if (result.confidence === 'high'){
+      if (result.confidence === 'high' && !a.outOfArea){
         saveVerifiedAddress(a.raw, result.lat, result.lng);
       }
     } else {
@@ -1423,81 +1474,114 @@ async function ensureAllCourierPointsGeocoded(){
  */
 const COUNT_BUFFER = 6; // addresses of slack allowed between the busiest and lightest courier
 
+/**
+ * Groups addresses into N geographically compact clusters using a capacity-constrained
+ * k-means-style algorithm. Each cluster is constrained to [minSize, maxSize] addresses,
+ * so the result respects the count-balance requirement while keeping each group spatially
+ * coherent — this is what prevents a single courier's route from zig-zagging across the
+ * whole service area just because individual addresses happened to be "closest" to their
+ * start point in isolation.
+ */
+function clusterAddressesGeographically(addrs, numClusters, minSize, maxSize){
+  if (!addrs.length || numClusters <= 0) return [];
+  if (numClusters === 1) return [addrs.slice()];
+
+  // Seed centroids spread out via a k-means++-style farthest-point heuristic
+  const centroids = [{ lat: addrs[0].lat, lng: addrs[0].lng }];
+  while (centroids.length < numClusters){
+    let farthest = null, farthestDist = -1;
+    addrs.forEach(a => {
+      const minDistToCentroids = Math.min(...centroids.map(c => haversine(a.lat, a.lng, c.lat, c.lng)));
+      if (minDistToCentroids > farthestDist){ farthestDist = minDistToCentroids; farthest = a; }
+    });
+    centroids.push({ lat: farthest.lat, lng: farthest.lng });
+  }
+
+  let assignment = new Array(addrs.length).fill(0);
+  for (let iter = 0; iter < 15; iter++){
+    // Capacity-aware assignment: addresses with the strongest preference for their best
+    // cluster (vs. their second choice) get assigned first, filling each cluster up to
+    // maxSize before it stops accepting new members.
+    const clusterCounts = new Array(numClusters).fill(0);
+    const prefs = addrs.map((a, i) => {
+      const dists = centroids.map(c => haversine(a.lat, a.lng, c.lat, c.lng));
+      const sorted = dists.map((d, ci) => [d, ci]).sort((x,y) => x[0]-y[0]);
+      return { idx: i, sorted, gap: sorted.length > 1 ? sorted[1][0] - sorted[0][0] : 0 };
+    });
+    prefs.sort((a,b) => b.gap - a.gap);
+
+    const newAssignment = new Array(addrs.length).fill(-1);
+    prefs.forEach(p => {
+      for (const [, clusterIdx] of p.sorted){
+        if (clusterCounts[clusterIdx] < maxSize){
+          newAssignment[p.idx] = clusterIdx;
+          clusterCounts[clusterIdx]++;
+          break;
+        }
+      }
+      if (newAssignment[p.idx] === -1){
+        // every cluster at capacity — extremely rare (only if maxSize*numClusters < addrs.length)
+        let minIdx = 0;
+        for (let c = 1; c < numClusters; c++) if (clusterCounts[c] < clusterCounts[minIdx]) minIdx = c;
+        newAssignment[p.idx] = minIdx;
+        clusterCounts[minIdx]++;
+      }
+    });
+    assignment = newAssignment;
+
+    for (let c = 0; c < numClusters; c++){
+      const members = addrs.filter((_, i) => assignment[i] === c);
+      if (members.length){
+        centroids[c] = {
+          lat: members.reduce((s,a) => s+a.lat, 0) / members.length,
+          lng: members.reduce((s,a) => s+a.lng, 0) / members.length
+        };
+      }
+    }
+  }
+
+  const clusters = Array.from({length: numClusters}, () => []);
+  addrs.forEach((a, i) => clusters[assignment[i]].push(a));
+  return clusters;
+}
+
 function assignAddressesToNearestCourier(addrs, couriers){
   const locked = addrs.filter(a => a.manuallyAssigned && a.courierId != null && couriers.some(c => c.id === a.courierId));
   const free = addrs.filter(a => !locked.includes(a));
 
   free.forEach(a => a.courierId = null);
-
-  // initial nearest-start assignment for free addresses
-  free.forEach(a => {
-    let best = null, bestDist = Infinity;
-    couriers.forEach(c => {
-      const d = haversine(a.lat, a.lng, c.start.lat, c.start.lng);
-      if (d < bestDist){ bestDist = d; best = c; }
-    });
-    a.courierId = best.id;
-  });
+  if (!free.length) return;
 
   const target = addrs.length / couriers.length;
-  const minAllowed = Math.max(0, Math.floor(target - COUNT_BUFFER / 2));
+  const minAllowed = Math.max(1, Math.floor(target - COUNT_BUFFER / 2));
   const maxAllowed = Math.ceil(target + COUNT_BUFFER / 2);
 
-  const countFor = (courierId) =>
-    free.filter(a => a.courierId === courierId).length + locked.filter(a => a.courierId === courierId).length;
+  // 1. Split the free addresses into N geographically compact clusters (N = number of
+  //    couriers), each within the allowed size range.
+  const clusters = clusterAddressesGeographically(free, couriers.length, minAllowed, maxAllowed);
 
-  // Force-rebalance: repeatedly move the address that's CHEAPEST to relocate (smallest
-  // distance penalty) from the busiest over-allowed courier to the most under-allowed one,
-  // until every courier is within [minAllowed, maxAllowed]. Unlike a "only move if closer"
-  // rule, this guarantees balance even when a courier's start point is geographically far
-  // from the address cluster — it will still receive its fair share.
-  let iterations = 0;
-  const maxIterations = free.length * couriers.length + 10;
-  while (iterations < maxIterations){
-    iterations++;
-    const counts = couriers.map(c => ({ courier: c, count: countFor(c.id) }));
-    const over = counts.filter(x => x.count > maxAllowed).sort((a,b) => b.count - a.count)[0];
-    // receiving courier: anyone still below maxAllowed is eligible, prioritizing whoever is
-    // furthest under target — this must NOT require being below minAllowed, or the loop stops
-    // too early whenever every courier already clears the minimum, even if one is way over the max.
-    const under = counts.filter(x => x.count < maxAllowed).sort((a,b) => a.count - b.count)[0];
-    if (!over || !under || over.courier.id === under.courier.id) break;
+  // 2. Assign each compact cluster — as a whole — to the courier whose start point is
+  //    closest to that cluster's centroid. This is a one-to-one assignment problem solved
+  //    greedily: repeatedly pick the (cluster, courier) pair with the smallest distance,
+  //    removing both from further consideration.
+  const clusterCentroids = clusters.map(cl => ({
+    lat: cl.reduce((s,a) => s+a.lat, 0) / cl.length,
+    lng: cl.reduce((s,a) => s+a.lng, 0) / cl.length
+  }));
 
-    const candidates = free.filter(a => a.courierId === over.courier.id);
-    if (!candidates.length) break; // shouldn't happen, but guards against infinite loop
-
-    // move whichever candidate address costs the least extra distance for the receiving courier
-    let bestAddr = null, bestCost = Infinity;
-    candidates.forEach(a => {
-      const cost = haversine(a.lat, a.lng, under.courier.start.lat, under.courier.start.lng);
-      if (cost < bestCost){ bestCost = cost; bestAddr = a; }
-    });
-    bestAddr.courierId = under.courier.id;
-  }
-
-  // Soft optimization pass: among addresses still assigned to a courier other than their
-  // closest one, swap toward the closer courier whenever both stay within the allowed range
-  // (cosmetic improvement on top of the guaranteed balance above).
-  let changed = true;
-  let softIterations = 0;
-  while (changed && softIterations < 30){
-    changed = false;
-    softIterations++;
-    free.forEach(a => {
-      const currentCourier = couriers.find(c => c.id === a.courierId);
-      let best = currentCourier, bestDist = haversine(a.lat, a.lng, currentCourier.start.lat, currentCourier.start.lng);
-      couriers.forEach(c => {
-        if (c.id === currentCourier.id) return;
-        const d = haversine(a.lat, a.lng, c.start.lat, c.start.lng);
-        if (d < bestDist && countFor(c.id) < maxAllowed && countFor(currentCourier.id) > minAllowed){
-          bestDist = d; best = c;
-        }
+  const remainingClusterIdx = clusters.map((_, i) => i);
+  const remainingCouriers = couriers.slice();
+  while (remainingClusterIdx.length && remainingCouriers.length){
+    let bestPair = null, bestDist = Infinity;
+    remainingClusterIdx.forEach(ci => {
+      remainingCouriers.forEach(c => {
+        const d = haversine(clusterCentroids[ci].lat, clusterCentroids[ci].lng, c.start.lat, c.start.lng);
+        if (d < bestDist){ bestDist = d; bestPair = { ci, courier: c }; }
       });
-      if (best.id !== currentCourier.id){
-        a.courierId = best.id;
-        changed = true;
-      }
     });
+    clusters[bestPair.ci].forEach(a => { a.courierId = bestPair.courier.id; });
+    remainingClusterIdx.splice(remainingClusterIdx.indexOf(bestPair.ci), 1);
+    remainingCouriers.splice(remainingCouriers.indexOf(bestPair.courier), 1);
   }
 }
 
@@ -1807,6 +1891,7 @@ function recalcRouteDistance(courierId){
 function buildStopPopup(stopNumber, courierName, addr, win){
   const title = stopNumber ? `Stop ${stopNumber} — ${escapeHtml(courierName)}` : escapeHtml(courierName);
   const nameLine = addr.clientName ? `<div class="sp-name">${escapeHtml(addr.clientName)}</div>` : '';
+  const outOfAreaLine = addr.outOfArea ? `<div class="sp-window warn">⚠ în afara zonei București/Ilfov${addr.allowOutOfArea ? ' (permis manual)' : ''}</div>` : '';
   const windowLine = win
     ? `<div class="sp-window${win.afterLimit ? ' warn' : ''}">⏱ ${win.windowStart}–${win.windowEnd}${win.afterLimit ? ' · după ora limită' : ''}</div>`
     : '';
@@ -1818,6 +1903,7 @@ function buildStopPopup(stopNumber, courierName, addr, win){
   return `<div class="stop-popup">
     <div class="sp-title">${title}</div>
     ${nameLine}
+    ${outOfAreaLine}
     ${windowLine}
     <div class="sp-meta">${escapeHtml(addr.raw)}</div>
     ${detailsLine}
