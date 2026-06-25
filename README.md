@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/29354166/README.md)
+[README.md](https://github.com/user-attachments/files/29354722/README.md)
 # Trasee Curieri
 
 Aplicație web pentru planificarea automată a traseelor de livrare ale curierilor, cu repartizare optimizată a adreselor, calcul de intervale orare de livrare și export Excel.
@@ -14,7 +14,8 @@ Construită pentru livrări în **București, Ilfov și zona limitrofă**.
   - cascadă de variante de interogare pentru adrese incomplete
   - scor de încredere (precis / aproximativ / incert / din bază verificată) vizibil pe fiecare adresă
   - validare geografică strictă — orice rezultat în afara zonei București/Ilfov + marjă e respins automat, cu excepție manuală posibilă per adresă (din formularul de editare) pentru cazuri excepționale
-- **Curieri** configurabili individual: punct de plecare, punct de finalizare (poate diferi de plecare), oră de plecare, oră-limită opțională, cu buton de confirmare/validare per curier
+- **Curieri** configurabili individual: punct de plecare, punct de finalizare (poate diferi de plecare), oră de plecare, oră-limită opțională, cu buton de confirmare/validare per curier. Lista de curieri se salvează automat local în browser și se reîncarcă la următoarea sesiune.
+- **Reset granular**: buton de resetare independent pentru curieri, pentru adrese, și pentru trasee — plus un buton global "Resetează tot"
 - **Repartizare automată** a adreselor pe curieri, în 2 pași:
   1. clustering geografic compact (k-means cu capacitate constrânsă) — fiecare curier primește o zonă coerentă, nu adrese izolate alocate doar pe distanța față de punctul de start
   2. rafinare pe timp total de traseu (buffer de 2h între curieri)
@@ -65,9 +66,9 @@ Validarea geografică e fixată pe București + Ilfov + ~25-30km marjă. Pentru 
 ## Limitări cunoscute
 
 - Geocodarea gratuită (Nominatim) nu garantează precizie 100% pentru toate adresele — adresele cu scor de încredere scăzut trebuie verificate/ajustate manual pe hartă
-- Baza de adrese verificate se salvează în `localStorage`, local pe acest calculator/browser — nu se sincronizează automat între dispozitive sau calculatoare diferite
+- Baza de adrese verificate și lista de curieri se salvează în `localStorage`, local pe acest calculator/browser — nu se sincronizează automat între dispozitive sau calculatoare diferite
 - OSRM (server demo public) poate avea limite de rată sub sarcină mare; pentru volume foarte mari, ar fi nevoie de o instanță proprie
-- Fără persistență pentru restul datelor (curieri, adrese, trasee) — acestea se pierd la reîncărcarea paginii (nu există backend/bază de date)
+- Adresele și traseele NU sunt persistate — se reiau la fiecare sesiune nouă (intenționat, fiindcă livrările diferă zilnic)
 
 ## Licență
 
