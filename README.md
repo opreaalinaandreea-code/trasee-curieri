@@ -12,10 +12,10 @@ Construită pentru livrări în **București, Ilfov și zona limitrofă**.
   - normalizare automată a prescurtărilor românești de stradă (str/sos/bd/cal → Strada/Șoseaua/Bulevardul/Calea)
   - cascadă de variante de interogare pentru adrese incomplete
   - scor de încredere (precis / aproximativ / incert / din bază verificată) vizibil pe fiecare adresă
-  - validare geografică strictă — orice rezultat în afara zonei București/Ilfov + marjă e respins automat
+  - validare geografică strictă — orice rezultat în afara zonei București/Ilfov + marjă e respins automat, cu excepție manuală posibilă per adresă (din formularul de editare) pentru cazuri excepționale
 - **Curieri** configurabili individual: punct de plecare, punct de finalizare (poate diferi de plecare), oră de plecare, oră-limită opțională, cu buton de confirmare/validare per curier
 - **Repartizare automată** a adreselor pe curieri, în 2 pași:
-  1. echilibrare pe număr de adrese (cu buffer configurabil)
+  1. clustering geografic compact (k-means cu capacitate constrânsă) — fiecare curier primește o zonă coerentă, nu adrese izolate alocate doar pe distanța față de punctul de start
   2. rafinare pe timp total de traseu (buffer de 2h între curieri)
 - **Optimizare rută** per curier via OSRM (timp/distanță reală pe drum, nu linie dreaptă)
 - **Intervale de livrare** calculate automat: ora estimată de sosire + buffer de predare, rotunjită la fereastră fixă de 2 ore
