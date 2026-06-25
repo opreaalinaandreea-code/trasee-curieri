@@ -9,6 +9,7 @@ const state = {
   couriers: [],      // {id, name, start:{address,lat,lng}, end:{address,lat,lng}, color}
   addresses: [],      // {id, raw, details, clientName, phone, amount, paymentMethod, lat, lng, status:'pending'|'ok'|'error', courierId:null}
   routes: {},         // courierId -> {order:[addressId...], legs:[{distKm,durMin}], totalKm, totalMin}
+  routeSelection: new Set(), // address ids currently checked in the Trasee tab, for bulk move
   nextCourierId: 1,
   nextAddrId: 1,
 };
@@ -1753,10 +1754,19 @@ function renderRouteSummary(){
         <div class="es-title">Niciun traseu generat</div>
         <div class="es-sub">Adaugă curieri și adrese, apoi repartizează</div>
       </div>`;
+    state.routeSelection = new Set();
     return;
   }
 
+  if (!state.routeSelection) state.routeSelection = new Set();
+  // drop any selected ids that no longer exist in a route (e.g. after a removal)
+  const allRoutedIds = new Set(Object.values(state.routes).flatMap(r => r.order));
+  state.routeSelection.forEach(id => { if (!allRoutedIds.has(id)) state.routeSelection.delete(id); });
+
   container.innerHTML = '';
+
+  renderBulkMoveBar(container);
+
   state.couriers.forEach(c => {
     const route = state.routes[c.id];
     if (!route) return;
@@ -1791,8 +1801,7 @@ function renderRouteSummary(){
       const addr = state.addresses.find(a => a.id === addrId);
       if (!addr) return;
       const stopEl = document.createElement('div');
-      stopEl.className = 'addr-item';
-      stopEl.draggable = true;
+      stopEl.className = 'route-stop-item';
       stopEl.dataset.id = addr.id;
       stopEl.dataset.courier = c.id;
 
@@ -1807,8 +1816,13 @@ function renderRouteSummary(){
       const windowChip = win
         ? `<div class="addr-window-chip${win.afterLimit ? ' warn' : ''}">⏱ ${win.windowStart}–${win.windowEnd}${win.afterLimit ? ' · după ora limită' : ''}</div>`
         : '';
+      const isFirst = idx === 0;
+      const isLast = idx === route.order.length - 1;
+      const isChecked = state.routeSelection.has(addr.id);
 
       stopEl.innerHTML = `
+        <div class="rs-drag-handle" draggable="true" title="Trage pentru a reordona">⠿</div>
+        <input type="checkbox" class="rs-checkbox" data-select="${addr.id}" ${isChecked ? 'checked' : ''}>
         <span class="addr-badge" style="background:${c.color}">${idx + 1}</span>
         <div class="addr-text">
           <div class="addr-main">${titleLine}</div>
@@ -1817,6 +1831,15 @@ function renderRouteSummary(){
           ${detailsLine}
           ${phoneLine}
           ${paymentChip}
+          <div class="rs-row-actions">
+            <select class="rs-courier-select" data-id="${addr.id}">
+              ${state.couriers.map(co => `<option value="${co.id}" ${co.id === c.id ? 'selected' : ''}>${escapeHtml(co.name)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="rs-order-buttons">
+          <button class="rs-order-btn" data-move-up="${addr.id}" ${isFirst ? 'disabled' : ''} title="Mută mai sus">▲</button>
+          <button class="rs-order-btn" data-move-down="${addr.id}" ${isLast ? 'disabled' : ''} title="Mută mai jos">▼</button>
         </div>
       `;
       stopsDiv.appendChild(stopEl);
@@ -1824,19 +1847,163 @@ function renderRouteSummary(){
 
     enableDragReorder(stopsDiv, c.id);
   });
+
+  wireRouteStopControls(container);
+}
+
+function renderBulkMoveBar(container){
+  const bar = document.createElement('div');
+  bar.id = 'bulkMoveBar';
+  bar.className = 'bulk-move-bar';
+  bar.style.display = state.routeSelection.size ? 'flex' : 'none';
+  bar.innerHTML = `
+    <span class="bulk-move-count">${state.routeSelection.size} selectate</span>
+    <select id="bulkMoveTarget" class="rs-courier-select" style="flex:1;">
+      ${state.couriers.map(co => `<option value="${co.id}">${escapeHtml(co.name)}</option>`).join('')}
+    </select>
+    <button class="btn btn-primary btn-sm" id="bulkMoveBtn">Mută</button>
+    <button class="btn-icon" id="bulkMoveClearBtn" title="Anulează selecția">×</button>
+  `;
+  container.appendChild(bar);
+}
+
+function wireRouteStopControls(container){
+  // selection checkboxes
+  container.querySelectorAll('[data-select]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = parseInt(cb.dataset.select);
+      if (cb.checked) state.routeSelection.add(id);
+      else state.routeSelection.delete(id);
+      renderRouteSummary();
+      redrawMap();
+    });
+  });
+
+  // up/down reorder buttons
+  container.querySelectorAll('[data-move-up]').forEach(btn => {
+    btn.addEventListener('click', () => moveStopByOffset(parseInt(btn.dataset.moveUp), -1));
+  });
+  container.querySelectorAll('[data-move-down]').forEach(btn => {
+    btn.addEventListener('click', () => moveStopByOffset(parseInt(btn.dataset.moveDown), 1));
+  });
+
+  // per-row courier reassignment
+  container.querySelectorAll('.rs-courier-select').forEach(sel => {
+    if (sel.id === 'bulkMoveTarget') return; // handled separately
+    sel.addEventListener('change', () => {
+      const addrId = parseInt(sel.dataset.id);
+      const newCourierId = parseInt(sel.value);
+      moveAddressToCourier(addrId, newCourierId);
+    });
+  });
+
+  // bulk move bar
+  const bulkBtn = document.getElementById('bulkMoveBtn');
+  if (bulkBtn){
+    bulkBtn.addEventListener('click', () => {
+      const targetId = parseInt(document.getElementById('bulkMoveTarget').value);
+      const ids = Array.from(state.routeSelection);
+      ids.forEach(id => moveAddressToCourier(id, targetId, { skipRender: true }));
+      state.routeSelection.clear();
+      renderAddresses();
+      renderCouriers();
+      renderRouteSummary();
+      redrawMap();
+      showToast(`${ids.length} ${ids.length === 1 ? 'adresă mutată' : 'adrese mutate'}.`);
+    });
+  }
+  const clearBtn = document.getElementById('bulkMoveClearBtn');
+  if (clearBtn){
+    clearBtn.addEventListener('click', () => {
+      state.routeSelection.clear();
+      renderRouteSummary();
+      redrawMap();
+    });
+  }
+}
+
+/**
+ * Moves one address from its current courier's route to another courier's route,
+ * appending it at the end of the destination and recomputing distances for both.
+ * Mirrors the reassignment logic already used by the dropdown in the Adrese tab.
+ */
+function moveAddressToCourier(addrId, newCourierId, opts = {}){
+  const addr = state.addresses.find(a => a.id === addrId);
+  if (!addr) return;
+  const oldCourierId = addr.courierId;
+  if (newCourierId === oldCourierId) return;
+
+  addr.courierId = newCourierId;
+  addr.manuallyAssigned = true;
+
+  [oldCourierId, newCourierId].forEach(cid => {
+    if (cid == null) return;
+    let route = state.routes[cid];
+    if (!route){
+      if (cid !== newCourierId) return; // nothing to clean up on the old side if it never had a route
+      // destination courier has no active route yet — create a minimal one so the address
+      // doesn't silently disappear from the Trasee tab after the move
+      route = { order: [], totalKm: 0, totalMin: 0, geometry: null, legDurationsMin: [] };
+      state.routes[cid] = route;
+    }
+    if (cid === oldCourierId){
+      const i = route.order.indexOf(addrId);
+      if (i !== -1) route.order.splice(i, 1);
+    }
+    if (cid === newCourierId && !route.order.includes(addrId)){
+      route.order.push(addrId);
+    }
+    if (route.order.length){
+      recalcRouteDistance(cid);
+    } else {
+      delete state.routes[cid];
+    }
+  });
+
+  if (!opts.skipRender){
+    renderAddresses();
+    renderCouriers();
+    renderRouteSummary();
+    redrawMap();
+    const targetCourier = state.couriers.find(c => c.id === newCourierId);
+    showToast(`Adresă mutată la ${targetCourier ? targetCourier.name : 'curier'}.`);
+  }
+}
+
+function moveStopByOffset(addrId, offset){
+  const courierId = state.addresses.find(a => a.id === addrId)?.courierId;
+  const route = state.routes[courierId];
+  if (!route) return;
+  const idx = route.order.indexOf(addrId);
+  const newIdx = idx + offset;
+  if (idx === -1 || newIdx < 0 || newIdx >= route.order.length) return;
+  [route.order[idx], route.order[newIdx]] = [route.order[newIdx], route.order[idx]];
+  recalcRouteDistance(courierId);
+  renderRouteSummary();
+  redrawMap();
 }
 
 function enableDragReorder(container, courierId){
   let draggedId = null;
-  container.querySelectorAll('.addr-item').forEach(item => {
-    item.addEventListener('dragstart', () => {
+  container.querySelectorAll('.route-stop-item').forEach(item => {
+    const handle = item.querySelector('.rs-drag-handle');
+    if (!handle) return;
+
+    handle.addEventListener('dragstart', e => {
       draggedId = parseInt(item.dataset.id);
       item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
     });
-    item.addEventListener('dragend', () => item.classList.remove('dragging'));
-    item.addEventListener('dragover', e => e.preventDefault());
+    handle.addEventListener('dragend', () => item.classList.remove('dragging'));
+
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (parseInt(item.dataset.id) !== draggedId) item.classList.add('drag-over');
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
     item.addEventListener('drop', e => {
       e.preventDefault();
+      item.classList.remove('drag-over');
       const targetId = parseInt(item.dataset.id);
       if (draggedId === targetId) return;
       reorderStop(courierId, draggedId, targetId);
