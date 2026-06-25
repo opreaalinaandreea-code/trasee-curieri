@@ -331,6 +331,97 @@ input[type=file]{display:none;}
 }
 .addr-item:hover{border-color:var(--ink-soft);}
 .addr-item.dragging{opacity:0.4;}
+
+/* ---- route stop item (Trasee tab) ---- */
+.route-stop-item{
+  display:flex;
+  align-items:flex-start;
+  gap:7px;
+  padding:9px 10px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  margin-bottom:7px;
+  background:var(--white);
+  font-size:12.5px;
+  transition:box-shadow .12s, border-color .12s, background .12s;
+}
+.route-stop-item:hover{border-color:var(--ink-soft);}
+.route-stop-item.dragging{opacity:0.4;}
+.route-stop-item.drag-over{
+  border-color:var(--route);
+  background:var(--route-soft);
+}
+.rs-drag-handle{
+  cursor:grab;
+  color:var(--line);
+  font-size:16px;
+  line-height:1;
+  padding:2px 4px;
+  flex-shrink:0;
+  align-self:center;
+  user-select:none;
+}
+.rs-drag-handle:hover{color:var(--ink-soft);}
+.rs-drag-handle:active{cursor:grabbing;}
+.rs-checkbox{
+  flex-shrink:0;
+  align-self:center;
+  margin:0;
+  cursor:pointer;
+  accent-color:var(--route);
+}
+.rs-row-actions{margin-top:6px;}
+.rs-courier-select{
+  font-family:'Inter',sans-serif;
+  font-size:11px;
+  font-weight:600;
+  padding:3px 6px;
+  border:1px solid var(--line);
+  border-radius:3px;
+  background:var(--white);
+  cursor:pointer;
+  max-width:100%;
+}
+.rs-order-buttons{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  flex-shrink:0;
+  align-self:center;
+}
+.rs-order-btn{
+  width:22px; height:18px;
+  border:1px solid var(--line);
+  background:var(--white);
+  border-radius:2px;
+  font-size:9px;
+  line-height:1;
+  color:var(--ink-soft);
+  cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  padding:0;
+}
+.rs-order-btn:hover:not(:disabled){border-color:var(--route); color:var(--route);}
+.rs-order-btn:disabled{opacity:0.3; cursor:not-allowed;}
+
+.bulk-move-bar{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  padding:9px 10px;
+  margin-bottom:14px;
+  background:var(--route-soft);
+  border:1px solid var(--route);
+  border-radius:var(--radius);
+}
+.bulk-move-count{
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
+  font-weight:600;
+  color:var(--ink);
+  white-space:nowrap;
+}
+
 .addr-item .addr-badge{
   font-family:'JetBrains Mono',monospace;
   font-size:10px;
